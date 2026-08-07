@@ -11,7 +11,7 @@ from translator_engine import translate
 from speech_engine import Recorder, transcribe, transcribe_auto
 from win_focus import force_foreground, is_foreground_fullscreen
 from settings_window import SettingsWindow
-from settings_store import save as save_settings
+from settings_store import save_keys as save_settings_keys
 from ui_kit import IconButton, SpinnerDots, fade_in_widget, show_animated, hide_animated
 from confirm_dialog import ConfirmDialog
 
@@ -375,7 +375,7 @@ class ChatWindow(QWidget):
         self.pin_btn.set_icon(self.PIN_ICON[new_mode])
         self.pin_btn.setToolTip(self.PIN_TOOLTIP[new_mode])
         self._apply_pin_mode()
-        self._persist()
+        save_settings_keys(self.settings, ["pin_mode"])
 
     def _apply_pin_mode(self):
         mode = self.settings["pin_mode"]
@@ -458,12 +458,24 @@ class ChatWindow(QWidget):
             self._dragging = False
             self.settings["window_x"] = self.x()
             self.settings["window_y"] = self.y()
-            self._persist()
+            save_settings_keys(self.settings, ["window_x", "window_y"])
 
-    def _persist(self):
-        self.settings["capture_hotkey"] = self.hotkeys.capture
-        self.settings["toggle_hotkey"] = self.hotkeys.toggle
-        save_settings(self.settings)
+    def _persist_positions(self):
+        """Сохраняет только позиции окон — вызывается при выходе из
+        программы (main.py), чтобы точно не потерять положение окон.
+
+        Намеренно НЕ трогает прозрачность/горячие клавиши/автокопирование/
+        звук/масштаб — эти настройки сохраняются отдельно, только по
+        нажатию кнопки "Сохранить" в окне настроек (settings_window.py).
+        Если сохранять здесь весь self.settings целиком, то ещё не
+        подтверждённые кнопкой "Сохранить" изменения из открытого окна
+        настроек могли бы случайно попасть на диск просто из-за выхода
+        из программы.
+        """
+        keys = ["window_x", "window_y"]
+        if self.settings_window is not None:
+            keys += ["settings_window_x", "settings_window_y"]
+        save_settings_keys(self.settings, keys)
 
     # ---- появление/исчезновение окна ----
     def animate_show(self):

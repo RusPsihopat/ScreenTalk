@@ -14,7 +14,8 @@ import numpy as np
 
 from PySide6.QtCore import QObject, Signal, QThread, QTimer
 from PySide6.QtGui import QIcon, QAction
-from PySide6.QtWidgets import QApplication, QSystemTrayIcon, QMenu
+from PySide6.QtWidgets import QApplication, QSystemTrayIcon, QMenu, QMessageBox
+from PySide6.QtNetwork import QLocalServer, QLocalSocket
 
 import keyboard  # глобальные хоткеи; на Windows поверх игр нужны права администратора
 
@@ -64,9 +65,49 @@ def _combo_matches(combo: dict, ctrl: bool, alt: bool, shift: bool) -> bool:
     return combo["ctrl"] == ctrl and combo["alt"] == alt and combo["shift"] == shift
 
 
+_SINGLE_INSTANCE_KEY = "translator_app_single_instance_guard"
+
+
+def _acquire_single_instance_lock():
+    """Проверяет, не запущен ли уже другой экземпляр программы.
+
+    Возвращает QLocalServer, который нужно держать живым до конца работы
+    программы (иначе его удалит сборщик мусора и проверка перестанет
+    действовать), либо None, если другой экземпляр уже запущен и работает.
+    """
+    probe = QLocalSocket()
+    probe.connectToServer(_SINGLE_INSTANCE_KEY)
+    already_running = probe.waitForConnected(200)
+    probe.close()
+
+    if already_running:
+        return None
+
+    # Если предыдущий процесс завершился аварийно, на Linux/macOS на диске
+    # может остаться "зависший" файл сокета — раз подключиться выше не
+    # удалось, значит другого живого экземпляра нет и файл точно можно
+    # удалить перед тем, как начать слушать самим.
+    QLocalServer.removeServer(_SINGLE_INSTANCE_KEY)
+    server = QLocalServer()
+    server.listen(_SINGLE_INSTANCE_KEY)
+    return server
+
+
 def main():
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
+
+    single_instance_server = _acquire_single_instance_lock()
+    if single_instance_server is None:
+        QMessageBox.warning(
+            None,
+            "Переводчик",
+            "Программа уже запущена. Ищите её значок в системном трее.",
+        )
+        sys.exit(0)
+    # держим ссылку на объект — иначе сборщик мусора его удалит и сервер
+    # перестанет слушать, и проверка выше перестанет работать
+    app._single_instance_server = single_instance_server
 
     settings = settings_store.load()
     hotkeys = HotkeyState(settings["capture_hotkey"], settings["toggle_hotkey"])
@@ -204,7 +245,7 @@ def main():
         if chat.settings_window is not None:
             chat.settings["settings_window_x"] = chat.settings_window.x()
             chat.settings["settings_window_y"] = chat.settings_window.y()
-        chat._persist()
+        chat._persist_positions()
 
     app.aboutToQuit.connect(_save_positions_on_quit)
 

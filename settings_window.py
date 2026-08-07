@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
 import keyboard
 
 import settings_store
+from settings_store import save_keys as save_settings_keys
 from hotkey_state import combo_label
 from ui_kit import IconButton, ToggleSwitch, show_animated, hide_animated, fade_in_widget
 
@@ -248,7 +249,7 @@ class SettingsWindow(QWidget):
             self._dragging = False
             self.settings["settings_window_x"] = self.x()
             self.settings["settings_window_y"] = self.y()
-            self._persist()
+            save_settings_keys(self.settings, ["settings_window_x", "settings_window_y"])
 
     # ---- появление/исчезновение ----
     def animate_show(self):
@@ -265,22 +266,22 @@ class SettingsWindow(QWidget):
         self.opacity_value_label.setText(f"{percent}%")
         self.setWindowOpacity(max(percent, 1) / 100)
         self.opacity_changed.emit(percent)
-        self._persist()
+        self._mark_unsaved()
 
     # ---- переключатели ----
     def _on_auto_copy(self, checked):
         self.settings["auto_copy"] = checked
-        self._persist()
+        self._mark_unsaved()
 
     def _on_sound(self, checked):
         self.settings["sound_enabled"] = checked
-        self._persist()
+        self._mark_unsaved()
 
     # ---- масштаб ----
     def _on_scale(self, value):
         self.settings["ui_scale"] = value
         self._refresh_scale_buttons()
-        self._persist()
+        self._mark_unsaved()
         self.scale_changed.emit(value)
 
     # ---- запись новой горячей клавиши ----
@@ -307,21 +308,23 @@ class SettingsWindow(QWidget):
 
     def _apply_capture(self, scan_code, ctrl, alt, shift):
         self.hotkeys.capture = {"scan_code": scan_code, "ctrl": ctrl, "alt": alt, "shift": shift}
+        self.settings["capture_hotkey"] = self.hotkeys.capture
         self.capture_btn.setText(combo_label(self.hotkeys.capture))
-        self._persist()
+        self._mark_unsaved()
 
     def _apply_toggle(self, scan_code, ctrl, alt, shift):
         self.hotkeys.toggle = {"scan_code": scan_code, "ctrl": ctrl, "alt": alt, "shift": shift}
-        self.toggle_btn.setText(combo_label(self.hotkeys.toggle))
-        self._persist()
-
-    def _persist(self):
-        self.settings["capture_hotkey"] = self.hotkeys.capture
         self.settings["toggle_hotkey"] = self.hotkeys.toggle
-        settings_store.save(self.settings)
+        self.toggle_btn.setText(combo_label(self.hotkeys.toggle))
+        self._mark_unsaved()
+
+    def _mark_unsaved(self):
+        """Любое изменение в окне настроек делает надпись "✓ Сохранено"
+        неактуальной, пока пользователь не нажмёт "Сохранить" ещё раз."""
+        self.saved_label.hide()
 
     def _on_save_clicked(self):
-        self._persist()
+        settings_store.save(self.settings)
         self.saved_label.show()
         fade_in_widget(self.saved_label, duration=150)
         QTimer.singleShot(1600, self.saved_label.hide)
