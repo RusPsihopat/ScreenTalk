@@ -1,0 +1,9 @@
+PySide6
+keyboard
+mss
+numpy
+deep-translator
+requests
+Pillow
+SpeechRecognition
+sounddevice
