@@ -110,6 +110,7 @@ def main():
 
     bridge.capture_requested.connect(start_capture)
     bridge.toggle_requested.connect(toggle_chat)
+    chat.quit_requested.connect(app.quit)
 
     # Ловим целевые клавиши по скан-коду напрямую (не по имени), чтобы не
     # зависеть от раскладки и от того, как Windows называет эту клавишу.
@@ -192,6 +193,20 @@ def main():
             QSystemTrayIcon.MessageIcon.Warning,
             8000,
         )
+
+    # Подстраховка: на случай, если окно было перемещено не через обычное
+    # перетаскивание (например, программно), на выходе ещё раз сохраняем
+    # текущие позиции обоих окон — так они точно не потеряются даже при
+    # полном закрытии программы.
+    def _save_positions_on_quit():
+        chat.settings["window_x"] = chat.x()
+        chat.settings["window_y"] = chat.y()
+        if chat.settings_window is not None:
+            chat.settings["settings_window_x"] = chat.settings_window.x()
+            chat.settings["settings_window_y"] = chat.settings_window.y()
+        chat._persist()
+
+    app.aboutToQuit.connect(_save_positions_on_quit)
 
     chat.animate_show()
 

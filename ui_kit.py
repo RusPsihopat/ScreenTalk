@@ -129,6 +129,12 @@ class IconButton(QPushButton):
         p.drawLine(int(m), int(m), int(w - m), int(h - m))
         p.drawLine(int(w - m), int(m), int(m), int(h - m))
 
+    def _draw_minimize(self, p, w, h):
+        pen = QPen(p.brush().color(), max(1.6, w * 0.09), Qt.SolidLine, Qt.RoundCap)
+        p.setPen(pen)
+        y = h * 0.66
+        p.drawLine(int(w * 0.26), int(y), int(w * 0.74), int(y))
+
     def _draw_send(self, p, w, h):
         path = QPainterPath()
         m = w * 0.20

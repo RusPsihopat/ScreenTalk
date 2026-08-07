@@ -1,0 +1,23 @@
+{
+  "opacity_percent": 90,
+  "capture_hotkey": {
+    "scan_code": 41,
+    "ctrl": false,
+    "alt": false,
+    "shift": false
+  },
+  "toggle_hotkey": {
+    "scan_code": 41,
+    "ctrl": false,
+    "alt": true,
+    "shift": false
+  },
+  "pin_mode": "always",
+  "auto_copy": true,
+  "sound_enabled": true,
+  "ui_scale": 100,
+  "window_x": 558,
+  "window_y": 291,
+  "settings_window_x": 205,
+  "settings_window_y": 256
+}

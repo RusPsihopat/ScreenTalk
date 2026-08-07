@@ -1,7 +1,7 @@
 """Окно настроек — в том же визуальном стиле, что и основное окно чата:
 тёмное, скруглённое, полупрозрачное, с плавным появлением/исчезновением.
 """
-from PySide6.QtCore import Qt, QPoint, QObject, Signal
+from PySide6.QtCore import Qt, QPoint, QObject, Signal, QTimer
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSlider, QFrame
 )
@@ -10,7 +10,7 @@ import keyboard
 
 import settings_store
 from hotkey_state import combo_label
-from ui_kit import IconButton, ToggleSwitch, show_animated, hide_animated
+from ui_kit import IconButton, ToggleSwitch, show_animated, hide_animated, fade_in_widget
 
 
 class HotkeyRecorder(QObject):
@@ -59,8 +59,12 @@ class SettingsWindow(QWidget):
 
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
         self.setAttribute(Qt.WA_TranslucentBackground)
-        self.resize(320, 420)
+        self.resize(320, 460)
         self._drag_pos = QPoint()
+        self._dragging = False
+
+        if settings.get("settings_window_x") is not None and settings.get("settings_window_y") is not None:
+            self.move(settings["settings_window_x"], settings["settings_window_y"])
 
         self._build_ui()
         self.setWindowOpacity(max(self.settings["opacity_percent"], 1) / 100)
@@ -160,6 +164,29 @@ class SettingsWindow(QWidget):
         self._refresh_scale_buttons()
 
         body.addStretch()
+
+        # --- кнопка сохранить ---
+        save_row = QHBoxLayout()
+        save_row.setSpacing(10)
+        self.save_btn = QPushButton("Сохранить")
+        self.save_btn.setFixedHeight(36)
+        self.save_btn.setCursor(Qt.PointingHandCursor)
+        self.save_btn.setStyleSheet(
+            "QPushButton {background: #5aa0ff; color: white; border: none;"
+            "border-radius: 8px; font-size: 13px; font-weight: 600; padding: 0 18px;}"
+            "QPushButton:hover {background: #6fb0ff;}"
+        )
+        self.save_btn.clicked.connect(self._on_save_clicked)
+
+        self.saved_label = QLabel("✓ Сохранено")
+        self.saved_label.setStyleSheet("color: #3ddc84; font-size: 12px; font-weight: 600;")
+        self.saved_label.hide()
+
+        save_row.addWidget(self.save_btn)
+        save_row.addWidget(self.saved_label)
+        save_row.addStretch()
+        body.addLayout(save_row)
+
         main.addLayout(body)
 
     def _add_hotkey_row(self, parent_layout, label_text, combo, on_record):
@@ -206,14 +233,22 @@ class SettingsWindow(QWidget):
                     "QPushButton:hover {background: rgba(255,255,255,35);}"
                 )
 
-    # ---- перетаскивание окна без рамки ----
+    # ---- перетаскивание окна без рамки + запоминание позиции ----
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
             self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            self._dragging = True
 
     def mouseMoveEvent(self, event):
         if event.buttons() & Qt.LeftButton:
             self.move(event.globalPosition().toPoint() - self._drag_pos)
+
+    def mouseReleaseEvent(self, event):
+        if self._dragging:
+            self._dragging = False
+            self.settings["settings_window_x"] = self.x()
+            self.settings["settings_window_y"] = self.y()
+            self._persist()
 
     # ---- появление/исчезновение ----
     def animate_show(self):
@@ -284,3 +319,9 @@ class SettingsWindow(QWidget):
         self.settings["capture_hotkey"] = self.hotkeys.capture
         self.settings["toggle_hotkey"] = self.hotkeys.toggle
         settings_store.save(self.settings)
+
+    def _on_save_clicked(self):
+        self._persist()
+        self.saved_label.show()
+        fade_in_widget(self.saved_label, duration=150)
+        QTimer.singleShot(1600, self.saved_label.hide)

@@ -20,6 +20,8 @@ DEFAULTS = {
     "ui_scale": 100,        # 100 | 125 | 150 (% масштаба интерфейса)
     "window_x": None,       # запомненное положение окна чата
     "window_y": None,
+    "settings_window_x": None,  # запомненное положение окна настроек
+    "settings_window_y": None,
 }
 
 

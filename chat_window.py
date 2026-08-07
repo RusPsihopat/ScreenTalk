@@ -13,6 +13,7 @@ from win_focus import force_foreground, is_foreground_fullscreen
 from settings_window import SettingsWindow
 from settings_store import save as save_settings
 from ui_kit import IconButton, SpinnerDots, fade_in_widget, show_animated, hide_animated
+from confirm_dialog import ConfirmDialog
 
 
 # ---------- фоновые потоки, чтобы UI не подвисал ----------
@@ -173,6 +174,8 @@ class MessageBubble(QFrame):
 # ---------- главное окно ----------
 
 class ChatWindow(QWidget):
+    quit_requested = Signal()
+
     PIN_ORDER = ["always", "games", "normal"]
     PIN_ICON = {"always": "pin_always", "games": "pin_games", "normal": "pin_normal"}
     PIN_TOOLTIP = {
@@ -251,13 +254,19 @@ class ChatWindow(QWidget):
         self.settings_btn.setToolTip("Настройки")
         self.settings_btn.clicked.connect(self._open_settings)
 
+        self.minimize_btn = IconButton("minimize", size=round(22*s))
+        self.minimize_btn.setToolTip("Свернуть в трей")
+        self.minimize_btn.clicked.connect(self.animate_hide)
+
         self.close_btn = IconButton("close", size=round(22*s))
-        self.close_btn.clicked.connect(self.animate_hide)
+        self.close_btn.setToolTip("Закрыть")
+        self.close_btn.clicked.connect(self._on_close_clicked)
 
         title_bar.addWidget(title)
         title_bar.addStretch()
         title_bar.addWidget(self.pin_btn)
         title_bar.addWidget(self.settings_btn)
+        title_bar.addWidget(self.minimize_btn)
         title_bar.addWidget(self.close_btn)
         main.addLayout(title_bar)
 
@@ -393,6 +402,17 @@ class ChatWindow(QWidget):
         if was_visible:
             self.show()
 
+    # ---- закрытие: спрашиваем, свернуть в трей или закрыть полностью ----
+    def _on_close_clicked(self):
+        dialog = ConfirmDialog(
+            "Свернуть переводчик в трей или закрыть программу полностью?",
+            opacity_percent=self.settings["opacity_percent"],
+        )
+        dialog.minimize_chosen.connect(self.animate_hide)
+        dialog.quit_chosen.connect(self.quit_requested.emit)
+        dialog.animate_show_centered_on(self)
+        self._confirm_dialog = dialog  # держим ссылку, чтобы не удалило раньше времени
+
     # ---- настройки ----
     def _open_settings(self):
         if self.settings_window is None:
@@ -460,11 +480,13 @@ class ChatWindow(QWidget):
         if not text:
             return
         self.input.clear()
+        self.show_status("Выполняется перевод…")
         self._translate_thread = TranslateThread(text)
         self._translate_thread.done.connect(self._on_translated)
         self._translate_thread.start()
 
     def _on_translated(self, original, src, dst, translated):
+        self.hide_status()
         self.add_translated_pair(original, translated)
 
     # ---- добавление пары "оригинал / перевод" (используется и OCR-переводом) ----
@@ -491,14 +513,21 @@ class ChatWindow(QWidget):
         if animate:
             fade_in_widget(bubble)
 
-    # ---- индикатор распознавания OCR ----
-    def show_ocr_spinner(self):
+    # ---- индикатор фоновой работы (OCR, обычный перевод — общий спиннер) ----
+    def show_status(self, text: str):
+        self.ocr_label.setText(text)
         self.ocr_spinner.start()
         self.ocr_label.show()
 
-    def hide_ocr_spinner(self):
+    def hide_status(self):
         self.ocr_spinner.stop()
         self.ocr_label.hide()
+
+    def show_ocr_spinner(self):
+        self.show_status("Распознаю экран…")
+
+    def hide_ocr_spinner(self):
+        self.hide_status()
 
     # ---- голосовой ввод: push-to-talk — удерживать, чтобы записывать ----
     def _start_recording(self):
