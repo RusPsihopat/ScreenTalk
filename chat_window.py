@@ -1,4 +1,6 @@
 """Главное окно — минималистичный полупрозрачный чат с переводом."""
+import re
+
 from PySide6.QtCore import Qt, QThread, Signal, QPoint, QTimer
 from PySide6.QtGui import QGuiApplication, QPainter, QColor
 from PySide6.QtWidgets import (
@@ -119,6 +121,41 @@ class VoiceLevelWidget(QWidget):
             x += bar_w + gap
 
 
+# ---------- перенос длинных "слов" без пробелов (пути, ссылки, хэши) ----------
+
+_LONG_RUN_RE = re.compile(r'\S{25,}')
+_ZWSP = "\u200b"  # невидимый пробел — не меняет то, что видно на экране,
+                  # но даёт Qt разрешение перенести строку в этом месте
+
+
+def _make_wrappable(text: str) -> str:
+    """Без этого QLabel с wordWrap(True) переносит строку только по
+    обычным пробелам. Длинное "слово" без единого пробела — например,
+    Windows-путь вроде C:\\Users\\...\\site-packages или длинная ссылка —
+    Qt перенести не может и просто раздвигает пузырёк сообщения шире
+    окна чата, из-за чего внизу появляется горизонтальный ползунок.
+
+    Подставляем невидимый \u200b после привычных разделителей (\\, /, _,
+    -, ., которые не влияют на пробелы, поэтому копирование текста в
+    буфер обмена ими не испорчено — copy_btn копирует исходный
+    translated_text, а не то, что показано на экране) внутри длинных
+    "слов", а если внутри такого куска разделителей всё равно не
+    нашлось (например, длинный хэш), режем его принудительно каждые 20
+    символов, чтобы у Qt точно был выбор, где перенести строку.
+    """
+    def _break_long_run(match: "re.Match") -> str:
+        run = match.group(0)
+        run = re.sub(r'([\\/_\-.,;:])', r'\1' + _ZWSP, run)
+        pieces = run.split(_ZWSP)
+        pieces = [
+            _ZWSP.join(p[i:i + 20] for i in range(0, len(p), 20)) if len(p) > 20 else p
+            for p in pieces
+        ]
+        return _ZWSP.join(pieces)
+
+    return _LONG_RUN_RE.sub(_break_long_run, text)
+
+
 # ---------- один "пузырёк" сообщения (оригинал + перевод + копировать) ----------
 
 class MessageBubble(QFrame):
@@ -132,13 +169,13 @@ class MessageBubble(QFrame):
         layout.setSpacing(round(4 * scale))
 
         # оригинал — приглушённый, мелкий, курсивом: явно вспомогательный текст
-        orig_label = QLabel(original)
+        orig_label = QLabel(_make_wrappable(original))
         orig_label.setWordWrap(True)
         orig_label.setStyleSheet(f"color: #75797f; font-size: {round(11*scale)}px; font-style: italic;")
 
         row = QHBoxLayout()
         # перевод — крупный, жирный, белый: это то, ради чего открыт чат
-        tr_label = QLabel(translated)
+        tr_label = QLabel(_make_wrappable(translated))
         tr_label.setWordWrap(True)
         tr_label.setStyleSheet(f"color: #ffffff; font-size: {round(15*scale)}px; font-weight: 600;")
         tr_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
@@ -286,6 +323,7 @@ class ChatWindow(QWidget):
         # лента сообщений
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.scroll.setStyleSheet("QScrollArea {border: none; background: transparent;}")
         self.messages_container = QWidget()
         self.messages_container.setStyleSheet("background: transparent;")
