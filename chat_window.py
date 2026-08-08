@@ -1,6 +1,4 @@
 """Главное окно — минималистичный полупрозрачный чат с переводом."""
-import re
-
 from PySide6.QtCore import Qt, QThread, Signal, QPoint, QTimer
 from PySide6.QtGui import QGuiApplication, QPainter, QColor
 from PySide6.QtWidgets import (
@@ -13,7 +11,7 @@ from translator_engine import translate
 from speech_engine import Recorder, transcribe, transcribe_auto
 from win_focus import force_foreground, is_foreground_fullscreen
 from settings_window import SettingsWindow
-from settings_store import save_keys as save_settings_keys
+from settings_store import save_fields
 from ui_kit import IconButton, SpinnerDots, fade_in_widget, show_animated, hide_animated
 from confirm_dialog import ConfirmDialog
 
@@ -121,41 +119,6 @@ class VoiceLevelWidget(QWidget):
             x += bar_w + gap
 
 
-# ---------- перенос длинных "слов" без пробелов (пути, ссылки, хэши) ----------
-
-_LONG_RUN_RE = re.compile(r'\S{25,}')
-_ZWSP = "\u200b"  # невидимый пробел — не меняет то, что видно на экране,
-                  # но даёт Qt разрешение перенести строку в этом месте
-
-
-def _make_wrappable(text: str) -> str:
-    """Без этого QLabel с wordWrap(True) переносит строку только по
-    обычным пробелам. Длинное "слово" без единого пробела — например,
-    Windows-путь вроде C:\\Users\\...\\site-packages или длинная ссылка —
-    Qt перенести не может и просто раздвигает пузырёк сообщения шире
-    окна чата, из-за чего внизу появляется горизонтальный ползунок.
-
-    Подставляем невидимый \u200b после привычных разделителей (\\, /, _,
-    -, ., которые не влияют на пробелы, поэтому копирование текста в
-    буфер обмена ими не испорчено — copy_btn копирует исходный
-    translated_text, а не то, что показано на экране) внутри длинных
-    "слов", а если внутри такого куска разделителей всё равно не
-    нашлось (например, длинный хэш), режем его принудительно каждые 20
-    символов, чтобы у Qt точно был выбор, где перенести строку.
-    """
-    def _break_long_run(match: "re.Match") -> str:
-        run = match.group(0)
-        run = re.sub(r'([\\/_\-.,;:])', r'\1' + _ZWSP, run)
-        pieces = run.split(_ZWSP)
-        pieces = [
-            _ZWSP.join(p[i:i + 20] for i in range(0, len(p), 20)) if len(p) > 20 else p
-            for p in pieces
-        ]
-        return _ZWSP.join(pieces)
-
-    return _LONG_RUN_RE.sub(_break_long_run, text)
-
-
 # ---------- один "пузырёк" сообщения (оригинал + перевод + копировать) ----------
 
 class MessageBubble(QFrame):
@@ -169,13 +132,13 @@ class MessageBubble(QFrame):
         layout.setSpacing(round(4 * scale))
 
         # оригинал — приглушённый, мелкий, курсивом: явно вспомогательный текст
-        orig_label = QLabel(_make_wrappable(original))
+        orig_label = QLabel(original)
         orig_label.setWordWrap(True)
         orig_label.setStyleSheet(f"color: #75797f; font-size: {round(11*scale)}px; font-style: italic;")
 
         row = QHBoxLayout()
         # перевод — крупный, жирный, белый: это то, ради чего открыт чат
-        tr_label = QLabel(_make_wrappable(translated))
+        tr_label = QLabel(translated)
         tr_label.setWordWrap(True)
         tr_label.setStyleSheet(f"color: #ffffff; font-size: {round(15*scale)}px; font-weight: 600;")
         tr_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
@@ -323,7 +286,6 @@ class ChatWindow(QWidget):
         # лента сообщений
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
-        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.scroll.setStyleSheet("QScrollArea {border: none; background: transparent;}")
         self.messages_container = QWidget()
         self.messages_container.setStyleSheet("background: transparent;")
@@ -413,7 +375,7 @@ class ChatWindow(QWidget):
         self.pin_btn.set_icon(self.PIN_ICON[new_mode])
         self.pin_btn.setToolTip(self.PIN_TOOLTIP[new_mode])
         self._apply_pin_mode()
-        save_settings_keys(self.settings, ["pin_mode"])
+        save_fields(pin_mode=new_mode)
 
     def _apply_pin_mode(self):
         mode = self.settings["pin_mode"]
@@ -496,24 +458,7 @@ class ChatWindow(QWidget):
             self._dragging = False
             self.settings["window_x"] = self.x()
             self.settings["window_y"] = self.y()
-            save_settings_keys(self.settings, ["window_x", "window_y"])
-
-    def _persist_positions(self):
-        """Сохраняет только позиции окон — вызывается при выходе из
-        программы (main.py), чтобы точно не потерять положение окон.
-
-        Намеренно НЕ трогает прозрачность/горячие клавиши/автокопирование/
-        звук/масштаб — эти настройки сохраняются отдельно, только по
-        нажатию кнопки "Сохранить" в окне настроек (settings_window.py).
-        Если сохранять здесь весь self.settings целиком, то ещё не
-        подтверждённые кнопкой "Сохранить" изменения из открытого окна
-        настроек могли бы случайно попасть на диск просто из-за выхода
-        из программы.
-        """
-        keys = ["window_x", "window_y"]
-        if self.settings_window is not None:
-            keys += ["settings_window_x", "settings_window_y"]
-        save_settings_keys(self.settings, keys)
+            save_fields(window_x=self.x(), window_y=self.y())
 
     # ---- появление/исчезновение окна ----
     def animate_show(self):

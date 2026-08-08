@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
 import keyboard
 
 import settings_store
-from settings_store import save_keys as save_settings_keys
+import autostart
 from hotkey_state import combo_label
 from ui_kit import IconButton, ToggleSwitch, show_animated, hide_animated, fade_in_widget
 
@@ -164,7 +164,20 @@ class SettingsWindow(QWidget):
         body.addLayout(scale_row)
         self._refresh_scale_buttons()
 
+        # --- автозапуск ---
+        self.autostart_switch = self._add_toggle_row(
+            body, "Автозапуск при старте Windows", autostart.is_enabled(), self._on_autostart
+        )
+        self.autostart_admin_switch = self._add_toggle_row(
+            body, "Автозапуск с правами администратора",
+            self.settings.get("autostart_admin", False), self._on_autostart_admin
+        )
+
         body.addStretch()
+
+        hint = QLabel("Изменения применяются сразу. Чтобы они сохранились и\nпосле перезапуска — нажмите «Сохранить».")
+        hint.setStyleSheet("color: #7a7f87; font-size: 11px;")
+        body.addWidget(hint)
 
         # --- кнопка сохранить ---
         save_row = QHBoxLayout()
@@ -249,7 +262,7 @@ class SettingsWindow(QWidget):
             self._dragging = False
             self.settings["settings_window_x"] = self.x()
             self.settings["settings_window_y"] = self.y()
-            save_settings_keys(self.settings, ["settings_window_x", "settings_window_y"])
+            settings_store.save_fields(settings_window_x=self.x(), settings_window_y=self.y())
 
     # ---- появление/исчезновение ----
     def animate_show(self):
@@ -259,30 +272,43 @@ class SettingsWindow(QWidget):
     def animate_hide(self):
         hide_animated(self, slide="side")
 
-    # ---- прозрачность ----
+    # ---- прозрачность (применяется сразу, но на диск пишется только по кнопке "Сохранить") ----
     def _on_opacity_slider(self, slider_value):
         percent = slider_value * 5
         self.settings["opacity_percent"] = percent
         self.opacity_value_label.setText(f"{percent}%")
         self.setWindowOpacity(max(percent, 1) / 100)
         self.opacity_changed.emit(percent)
-        self._mark_unsaved()
 
-    # ---- переключатели ----
+    # ---- переключатели (тоже применяются сразу, сохраняются по кнопке) ----
     def _on_auto_copy(self, checked):
         self.settings["auto_copy"] = checked
-        self._mark_unsaved()
 
     def _on_sound(self, checked):
         self.settings["sound_enabled"] = checked
-        self._mark_unsaved()
 
     # ---- масштаб ----
     def _on_scale(self, value):
         self.settings["ui_scale"] = value
         self._refresh_scale_buttons()
-        self._mark_unsaved()
         self.scale_changed.emit(value)
+
+    # ---- автозапуск (применяется сразу — это прямое действие с Windows,
+    # как и положение окна, а не просто внутренняя настройка приложения) ----
+    def _on_autostart(self, checked):
+        ok = autostart.set_enabled(checked, run_as_admin=self.settings.get("autostart_admin", False))
+        if not ok:
+            self.autostart_switch.setChecked(not checked, animate=False)
+            return
+        settings_store.save_fields(autostart_admin=self.settings.get("autostart_admin", False))
+
+    def _on_autostart_admin(self, checked):
+        self.settings["autostart_admin"] = checked
+        settings_store.save_fields(autostart_admin=checked)
+        if autostart.is_enabled():
+            ok = autostart.set_enabled(True, run_as_admin=checked)
+            if not ok:
+                self.autostart_admin_switch.setChecked(not checked, animate=False)
 
     # ---- запись новой горячей клавиши ----
     def _record_capture(self):
@@ -308,23 +334,19 @@ class SettingsWindow(QWidget):
 
     def _apply_capture(self, scan_code, ctrl, alt, shift):
         self.hotkeys.capture = {"scan_code": scan_code, "ctrl": ctrl, "alt": alt, "shift": shift}
-        self.settings["capture_hotkey"] = self.hotkeys.capture
         self.capture_btn.setText(combo_label(self.hotkeys.capture))
-        self._mark_unsaved()
 
     def _apply_toggle(self, scan_code, ctrl, alt, shift):
         self.hotkeys.toggle = {"scan_code": scan_code, "ctrl": ctrl, "alt": alt, "shift": shift}
-        self.settings["toggle_hotkey"] = self.hotkeys.toggle
         self.toggle_btn.setText(combo_label(self.hotkeys.toggle))
-        self._mark_unsaved()
 
-    def _mark_unsaved(self):
-        """Любое изменение в окне настроек делает надпись "✓ Сохранено"
-        неактуальной, пока пользователь не нажмёт "Сохранить" ещё раз."""
-        self.saved_label.hide()
+    def _persist(self):
+        self.settings["capture_hotkey"] = self.hotkeys.capture
+        self.settings["toggle_hotkey"] = self.hotkeys.toggle
+        settings_store.save(self.settings)
 
     def _on_save_clicked(self):
-        settings_store.save(self.settings)
+        self._persist()
         self.saved_label.show()
         fade_in_widget(self.saved_label, duration=150)
         QTimer.singleShot(1600, self.saved_label.hide)

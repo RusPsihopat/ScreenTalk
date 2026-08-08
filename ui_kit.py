@@ -350,7 +350,13 @@ class SpinnerDots(QWidget):
 # ==================== анимации окон и виджетов ====================
 
 def fade_in_widget(widget, duration=200):
-    """Плавное появление виджета (например, нового сообщения в чате)."""
+    """Плавное появление виджета (например, нового сообщения в чате).
+
+    Важно: QGraphicsOpacityEffect снимается сразу после завершения анимации,
+    а не остаётся навсегда. Если оставить эффект висеть на виджете внутри
+    QScrollArea, Qt начинает некорректно перерисовывать такие виджеты при
+    прокрутке — иконки/текст могут "зависать" на месте или задваиваться.
+    """
     effect = QGraphicsOpacityEffect(widget)
     widget.setGraphicsEffect(effect)
     anim = QPropertyAnimation(effect, b"opacity")
@@ -360,6 +366,13 @@ def fade_in_widget(widget, duration=200):
     anim.setEasingCurve(QEasingCurve.OutCubic)
     widget._fade_effect = effect  # держим ссылки, чтобы не удалило сборщиком мусора
     widget._fade_anim = anim
+
+    def _cleanup():
+        widget.setGraphicsEffect(None)
+        widget._fade_effect = None
+        widget.update()
+
+    anim.finished.connect(_cleanup)
     anim.start()
 
 

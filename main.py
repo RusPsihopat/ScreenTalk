@@ -14,8 +14,7 @@ import numpy as np
 
 from PySide6.QtCore import QObject, Signal, QThread, QTimer
 from PySide6.QtGui import QIcon, QAction
-from PySide6.QtWidgets import QApplication, QSystemTrayIcon, QMenu, QMessageBox
-from PySide6.QtNetwork import QLocalServer, QLocalSocket
+from PySide6.QtWidgets import QApplication, QSystemTrayIcon, QMenu
 
 import keyboard  # глобальные хоткеи; на Windows поверх игр нужны права администратора
 
@@ -26,6 +25,8 @@ from overlay import SelectionOverlay
 from ocr_engine import image_to_text
 from translator_engine import translate
 from win_focus import force_foreground, is_admin
+from single_instance import ensure_single_instance
+from elevate import relaunch_as_admin
 
 
 class HotkeyBridge(QObject):
@@ -65,49 +66,24 @@ def _combo_matches(combo: dict, ctrl: bool, alt: bool, shift: bool) -> bool:
     return combo["ctrl"] == ctrl and combo["alt"] == alt and combo["shift"] == shift
 
 
-_SINGLE_INSTANCE_KEY = "translator_app_single_instance_guard"
-
-
-def _acquire_single_instance_lock():
-    """Проверяет, не запущен ли уже другой экземпляр программы.
-
-    Возвращает QLocalServer, который нужно держать живым до конца работы
-    программы (иначе его удалит сборщик мусора и проверка перестанет
-    действовать), либо None, если другой экземпляр уже запущен и работает.
-    """
-    probe = QLocalSocket()
-    probe.connectToServer(_SINGLE_INSTANCE_KEY)
-    already_running = probe.waitForConnected(200)
-    probe.close()
-
-    if already_running:
-        return None
-
-    # Если предыдущий процесс завершился аварийно, на Linux/macOS на диске
-    # может остаться "зависший" файл сокета — раз подключиться выше не
-    # удалось, значит другого живого экземпляра нет и файл точно можно
-    # удалить перед тем, как начать слушать самим.
-    QLocalServer.removeServer(_SINGLE_INSTANCE_KEY)
-    server = QLocalServer()
-    server.listen(_SINGLE_INSTANCE_KEY)
-    return server
-
-
 def main():
+    # Повышение прав — до проверки "единственного экземпляра": если делать
+    # наоборот, непривилегированный процесс успел бы создать мьютекс единственного
+    # экземпляра и тут же завершиться при перезапуске с правами администратора,
+    # создавая гонку, в которой новый (уже повышенный) процесс мог бы на долю
+    # секунды увидеть чужой мьютекс ещё не освобождённым и ошибочно решить,
+    # что программа уже запущена.
+    if not is_admin():
+        if relaunch_as_admin():
+            sys.exit(0)
+        # не получилось (или пользователь отклонил UAC) — продолжаем без
+        # прав администратора, предупреждение об этом будет показано позже
+
+    if not ensure_single_instance():
+        sys.exit(0)  # уже запущен другой экземпляр — предупреждение уже показано
+
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
-
-    single_instance_server = _acquire_single_instance_lock()
-    if single_instance_server is None:
-        QMessageBox.warning(
-            None,
-            "Переводчик",
-            "Программа уже запущена. Ищите её значок в системном трее.",
-        )
-        sys.exit(0)
-    # держим ссылку на объект — иначе сборщик мусора его удалит и сервер
-    # перестанет слушать, и проверка выше перестанет работать
-    app._single_instance_server = single_instance_server
 
     settings = settings_store.load()
     hotkeys = HotkeyState(settings["capture_hotkey"], settings["toggle_hotkey"])
@@ -236,16 +212,18 @@ def main():
         )
 
     # Подстраховка: на случай, если окно было перемещено не через обычное
-    # перетаскивание (например, программно), на выходе ещё раз сохраняем
-    # текущие позиции обоих окон — так они точно не потеряются даже при
-    # полном закрытии программы.
+    # перетаскивание, на выходе ещё раз сохраняем текущие позиции обоих
+    # окон. Важно: берём за основу ПОСЛЕДНИЕ СОХРАНЁННЫЕ настройки с диска
+    # (а не текущие в памяти), иначе несохранённые кнопкой "Сохранить"
+    # изменения в панели настроек тоже случайно записались бы на диск.
     def _save_positions_on_quit():
-        chat.settings["window_x"] = chat.x()
-        chat.settings["window_y"] = chat.y()
+        saved = settings_store.load()
+        saved["window_x"] = chat.x()
+        saved["window_y"] = chat.y()
         if chat.settings_window is not None:
-            chat.settings["settings_window_x"] = chat.settings_window.x()
-            chat.settings["settings_window_y"] = chat.settings_window.y()
-        chat._persist_positions()
+            saved["settings_window_x"] = chat.settings_window.x()
+            saved["settings_window_y"] = chat.settings_window.y()
+        settings_store.save(saved)
 
     app.aboutToQuit.connect(_save_positions_on_quit)
 
